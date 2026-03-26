@@ -38,12 +38,12 @@ function initCampaign(id, name, location) {
 
 app.post('/api/events', (req, res) => {
     const event = req.body;
-    if (!event || !event.campaign_id) return res.status(400).json({error:'Invalid'});
-    
+    if (!event || !event.campaign_id) return res.status(400).json({ error: 'Invalid' });
+
     initCampaign(event.campaign_id, event.campaign_name, event.location);
     const c = campaigns[event.campaign_id];
     const a = event.audience;
-    
+
     const count = a.total_count || 0;
     const newAtt = a.attention.average_attention_time_seconds || 0;
 
@@ -65,23 +65,23 @@ app.post('/api/events', (req, res) => {
         attentionTime: newAtt
     });
     if (c.audienceLog.length > 50) c.audienceLog.pop(); // Keep top 50 recent audiences for this campaign
-    
+
     recentEvents.unshift(event);
     if (recentEvents.length > MAX_EVENTS) recentEvents.pop();
 
-    res.status(200).json({status: 'ok'});
+    res.status(200).json({ status: 'ok' });
 });
 
 // To simulate timescales, we'll generate some static history charts data on the fly based on the timescale
 app.get('/api/stats', (req, res) => {
     const scale = req.query.timeScale || 'day'; // day, week, month
     let multiplier = scale === 'month' ? 30 : (scale === 'week' ? 7 : 1);
-    
+
     // Create chart data: array of objects { label, value } for line chart
     const labels = scale === 'day' ? ['08:00', '12:00', '16:00', '20:00'] :
-                   (scale === 'week' ? ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'] :
-                   ['Mg 1', 'Mg 2', 'Mg 3', 'Mg 4']);
-    
+        (scale === 'week' ? ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'] :
+            ['Mg 1', 'Mg 2', 'Mg 3', 'Mg 4']);
+
     const chartData = labels.map((l, idx) => ({
         label: l,
         // Make the line chart curve nicely
@@ -105,11 +105,11 @@ app.get('/api/stats', (req, res) => {
             displayAudience: c.totalAudience + (multiplier > 1 ? Math.floor(c.totalAudience * multiplier * (Math.random() + 0.5)) : 0)
         };
     });
-    
+
     // Overall Stats
     const totalAudience = Object.values(campaigns).reduce((acc, c) => acc + c.totalAudience, 0);
     const overallAudience = totalAudience + (multiplier > 1 ? Math.floor(totalAudience * multiplier) : 0);
-    
+
     // Average overall Attention Time
     const activeCampaigns = campaignsList.filter(c => c.eventsCount > 0);
     let overallAttention = 0;
@@ -128,8 +128,8 @@ app.get('/api/stats', (req, res) => {
     });
 
     let timeText = scale === 'day' ? 'hari ini' : (scale === 'week' ? 'minggu ini' : 'bulan ini');
-    let insightSummary = campaignsList.length === 0 
-        ? "Sedang mengumpulkan data audiens..." 
+    let insightSummary = campaignsList.length === 0
+        ? "Sedang mengumpulkan data audiens..."
         : `Sepanjang ${timeText}, interaksi audiens terpantau aktif dengan puncak minat tertinggi pada kampanye "${topCampaignName || 'Berbagai Iklan'}". Retensi perhatian penonton rata-rata stabil di angka ${overallAttention.toFixed(1)} detik.`;
 
     res.json({
@@ -143,8 +143,21 @@ app.get('/api/stats', (req, res) => {
     });
 });
 
+app.get('/api/ai-data', async (req, res) => {
+    try {
+        const response = await fetch(
+            "https://videotron-analytics-ai-backend-production.up.railway.app/generate"
+        );
+        const data = await response.json();
+
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: "Failed to fetch AI backend" });
+    }
+});
+
 app.get("/", (req, res) => {
-  res.send("Backend is running 🚀");
+    res.send("Backend is running 🚀");
 });
 
 app.listen(PORT, () => {
