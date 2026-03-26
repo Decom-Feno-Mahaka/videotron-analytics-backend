@@ -73,74 +73,114 @@ app.post('/api/events', (req, res) => {
 });
 
 // To simulate timescales, we'll generate some static history charts data on the fly based on the timescale
-app.get('/api/stats', (req, res) => {
-    const scale = req.query.timeScale || 'day'; // day, week, month
-    let multiplier = scale === 'month' ? 30 : (scale === 'week' ? 7 : 1);
+app.get('/api/stats', async (req, res) => {
+    try {
+        // 🔥 ambil data dari Python AI
+        const aiRes = await fetch(
+            "https://videotron-analytics-ai-backend-production.up.railway.app/generate"
+        );
+        const aiData = await aiRes.json();
 
-    // Create chart data: array of objects { label, value } for line chart
-    const labels = scale === 'day' ? ['08:00', '12:00', '16:00', '20:00'] :
-        (scale === 'week' ? ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'] :
-            ['Mg 1', 'Mg 2', 'Mg 3', 'Mg 4']);
+        // 👉 inject ke sistem kamu
+        const fakeEvent = {
+            campaign_id: aiData.campaign_id,
+            campaign_name: aiData.campaign_name,
+            location: aiData.location,
+            timestamp: aiData.timestamp,
+            audience: aiData.audience
+        };
 
-    const chartData = labels.map((l, idx) => ({
-        label: l,
-        // Make the line chart curve nicely
-        value: Math.floor(Math.sin(idx) * 100 * multiplier + 300 * multiplier + Math.random() * 50 * multiplier)
-    }));
+        // pakai logic existing
+        initCampaign(fakeEvent.campaign_id, fakeEvent.campaign_name, fakeEvent.location);
+        const c = campaigns[fakeEvent.campaign_id];
 
-    // Generate campaigns list
-    const campaignsList = Object.values(campaigns).map(c => {
-        const processedLocations = Object.values(c.locationStats).map(loc => ({
-            name: loc.name,
-            audience: loc.totalAudience + (multiplier > 1 ? Math.floor(loc.totalAudience * multiplier * (Math.random() + 0.5)) : 0),
-            attention: loc.eventsCount > 0 ? +(loc.totalAttentionSeconds / loc.eventsCount).toFixed(1) : 0
+        const count = fakeEvent.audience.total_count || 0;
+        const newAtt = fakeEvent.audience.attention.average_attention_time_seconds || 0;
+
+        c.totalAudience += count;
+        c.eventsCount++;
+        c.totalAttentionSeconds += newAtt;
+
+        if (fakeEvent.location && c.locationStats[fakeEvent.location]) {
+            const loc = c.locationStats[fakeEvent.location];
+            loc.totalAudience += count;
+            loc.totalAttentionSeconds += newAtt;
+            loc.eventsCount++;
+        }
+
+        recentEvents.unshift(fakeEvent);
+        if (recentEvents.length > MAX_EVENTS) recentEvents.pop();
+
+        const scale = req.query.timeScale || 'day'; // day, week, month
+        let multiplier = scale === 'month' ? 30 : (scale === 'week' ? 7 : 1);
+
+        // Create chart data: array of objects { label, value } for line chart
+        const labels = scale === 'day' ? ['08:00', '12:00', '16:00', '20:00'] :
+            (scale === 'week' ? ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'] :
+                ['Mg 1', 'Mg 2', 'Mg 3', 'Mg 4']);
+
+        const chartData = labels.map((l, idx) => ({
+            label: l,
+            // Make the line chart curve nicely
+            value: Math.floor(Math.sin(idx) * 100 * multiplier + 300 * multiplier + Math.random() * 50 * multiplier)
         }));
 
-        return {
-            ...c,
-            locations: processedLocations, // Swap simple strings with objects containing full stats
-            audienceLog: c.audienceLog,    // Pass to frontend
-            averageAttentionTime: c.eventsCount > 0 ? (c.totalAttentionSeconds / c.eventsCount) : 0, // Calculate average
-            // Scale the numbers purely for visual mock effect
-            displayAudience: c.totalAudience + (multiplier > 1 ? Math.floor(c.totalAudience * multiplier * (Math.random() + 0.5)) : 0)
-        };
-    });
+        // Generate campaigns list
+        const campaignsList = Object.values(campaigns).map(c => {
+            const processedLocations = Object.values(c.locationStats).map(loc => ({
+                name: loc.name,
+                audience: loc.totalAudience + (multiplier > 1 ? Math.floor(loc.totalAudience * multiplier * (Math.random() + 0.5)) : 0),
+                attention: loc.eventsCount > 0 ? +(loc.totalAttentionSeconds / loc.eventsCount).toFixed(1) : 0
+            }));
 
-    // Overall Stats
-    const totalAudience = Object.values(campaigns).reduce((acc, c) => acc + c.totalAudience, 0);
-    const overallAudience = totalAudience + (multiplier > 1 ? Math.floor(totalAudience * multiplier) : 0);
+            return {
+                ...c,
+                locations: processedLocations, // Swap simple strings with objects containing full stats
+                audienceLog: c.audienceLog,    // Pass to frontend
+                averageAttentionTime: c.eventsCount > 0 ? (c.totalAttentionSeconds / c.eventsCount) : 0, // Calculate average
+                // Scale the numbers purely for visual mock effect
+                displayAudience: c.totalAudience + (multiplier > 1 ? Math.floor(c.totalAudience * multiplier * (Math.random() + 0.5)) : 0)
+            };
+        });
 
-    // Average overall Attention Time
-    const activeCampaigns = campaignsList.filter(c => c.eventsCount > 0);
-    let overallAttention = 0;
-    if (activeCampaigns.length > 0) {
-        overallAttention = activeCampaigns.reduce((acc, c) => acc + c.averageAttentionTime, 0) / activeCampaigns.length;
-    }
+        // Overall Stats
+        const totalAudience = Object.values(campaigns).reduce((acc, c) => acc + c.totalAudience, 0);
+        const overallAudience = totalAudience + (multiplier > 1 ? Math.floor(totalAudience * multiplier) : 0);
 
-    // Generate AI Insight Summary
-    let topCampaignName = "";
-    let topAudience = 0;
-    campaignsList.forEach(c => {
-        if (c.displayAudience > topAudience) {
-            topAudience = c.displayAudience;
-            topCampaignName = c.name;
+        // Average overall Attention Time
+        const activeCampaigns = campaignsList.filter(c => c.eventsCount > 0);
+        let overallAttention = 0;
+        if (activeCampaigns.length > 0) {
+            overallAttention = activeCampaigns.reduce((acc, c) => acc + c.averageAttentionTime, 0) / activeCampaigns.length;
         }
-    });
 
-    let timeText = scale === 'day' ? 'hari ini' : (scale === 'week' ? 'minggu ini' : 'bulan ini');
-    let insightSummary = campaignsList.length === 0
-        ? "Sedang mengumpulkan data audiens..."
-        : `Sepanjang ${timeText}, interaksi audiens terpantau aktif dengan puncak minat tertinggi pada kampanye "${topCampaignName || 'Berbagai Iklan'}". Retensi perhatian penonton rata-rata stabil di angka ${overallAttention.toFixed(1)} detik.`;
+        // Generate AI Insight Summary
+        let topCampaignName = "";
+        let topAudience = 0;
+        campaignsList.forEach(c => {
+            if (c.displayAudience > topAudience) {
+                topAudience = c.displayAudience;
+                topCampaignName = c.name;
+            }
+        });
 
-    res.json({
-        scale,
-        overallAudience,
-        overallAttention,
-        insightSummary,
-        campaigns: campaignsList,
-        chartData,
-        recentEvents: recentEvents.slice(0, 10)
-    });
+        let timeText = scale === 'day' ? 'hari ini' : (scale === 'week' ? 'minggu ini' : 'bulan ini');
+        let insightSummary = campaignsList.length === 0
+            ? "Sedang mengumpulkan data audiens..."
+            : `Sepanjang ${timeText}, interaksi audiens terpantau aktif dengan puncak minat tertinggi pada kampanye "${topCampaignName || 'Berbagai Iklan'}". Retensi perhatian penonton rata-rata stabil di angka ${overallAttention.toFixed(1)} detik.`;
+
+        res.json({
+            scale,
+            overallAudience,
+            overallAttention,
+            insightSummary,
+            campaigns: campaignsList,
+            chartData,
+            recentEvents: recentEvents.slice(0, 10)
+        });
+    } catch (err) {
+        res.status(500).json({ error: "Failed to fetch stats" });
+    }
 });
 
 app.get('/api/ai-data', async (req, res) => {
